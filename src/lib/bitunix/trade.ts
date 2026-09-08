@@ -1,7 +1,6 @@
-import type { BitunixCreds, LiveAccount, LivePosition, LiveTpsl } from "./types";
+import { base44 } from "@/api/base44Client";
+import type { BitunixCreds, LiveAccount, LivePosition } from "./types";
 import { TRADE_LEVERAGE, baseFromSymbol, stopForExactRisk } from "./decide";
-
-const FAPI = "https://fapi.bitunix.com";
 
 function num(v: unknown, d = 0) {
   const n = Number(v);
@@ -15,38 +14,17 @@ function asRows(data: unknown): Record<string, unknown>[] {
   return [];
 }
 
-async function sha256Hex(text: string) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-function randomHex(n = 16) {
-  const a = new Uint8Array(n);
-  crypto.getRandomValues(a);
-  return [...a].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-export async function signedBitunix(creds: BitunixCreds, method: string, path: string, query?: string, body?: Record<string, unknown>) {
-  const nonce = randomHex(16);
-  const timestamp = String(Date.now());
-  const payload = body ? JSON.stringify(body) : "";
-  const digest = await sha256Hex(nonce + timestamp + creds.apiKey + (query ?? "") + payload);
-  const sign = await sha256Hex(digest + creds.apiSecret);
-  const url = `${FAPI}${path}${query ? `?${query}` : ""}`;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      "api-key": creds.apiKey,
-      nonce,
-      timestamp,
-      sign,
-      "Content-Type": "application/json",
-    },
-    body: method === "GET" ? undefined : payload || undefined,
+async function callTrade(creds: BitunixCreds, op: string, params: Record<string, unknown> = {}) {
+  const res = await base44.functions.invoke("bitunixTrade", {
+    op,
+    apiKey: creds.apiKey,
+    apiSecret: creds.apiSecret,
+    ...params,
   });
-  const json = (await res.json()) as { code?: number | string; msg?: string; data?: unknown };
-  if (String(json.code ?? "") !== "0" && json.code !== 0 && json.code != null) {
-    throw new Error(json.msg || `Bitunix ${json.code}`);
-  }
+  const json = res.data as { code?: number | string | null; msg?: string; data?: unknown; error?: string };
+  if (json == null) throw new Error("Trade proxy unreachable");
+  if (json.error) throw new Error(json.error);
+  if (json.code != null && String(json.code) !== "0") throw new Error(json.msg || `Bitunix ${json.code}`);
   return json.data;
 }
 
@@ -62,31 +40,7 @@ export async function placeLiveShort(creds: BitunixCreds, input: { symbol: strin
   const qty = qtyForNotional(input.last, input.notional);
   const stop = input.stopPrice ?? stopForExactRisk(input.last, input.notional);
   try {
-    await signedBitunix(creds, "POST", "/api/v1/futures/account/change_leverage", undefined, {
-      symbol: input.symbol,
-      leverage: TRADE_LEVERAGE,
-      marginMode: "ISOLATION",
-    }).catch(() =>
-      signedBitunix(creds, "POST", "/api/v1/futures/account/change_leverage", undefined, {
-        symbol: input.symbol,
-        leverage: TRADE_LEVERAGE,
-        marginMode: "ISOLATED",
-      }),
-    );
-    await signedBitunix(creds, "POST", "/api/v1/futures/trade/place_order", undefined, {
-      symbol: input.symbol,
-      side: "SELL",
-      tradeSide: "OPEN",
-      orderType: "MARKET",
-      qty,
-      reduceOnly: false,
-    });
-    await signedBitunix(creds, "POST", "/api/v1/futures/tpsl/place_order", undefined, {
-      symbol: input.symbol,
-      slPrice: String(stop),
-      slStopType: "LAST",
-      slQty: qty,
-    }).catch(() => null);
+    await callTrade(creds, "openShort", { symbol: input.symbol, qty, slPrice: stop, leverage: TRADE_LEVERAGE });
     return { ok: true as const, qty, stop };
   } catch (err) {
     return { ok: false as const, error: err instanceof Error ? err.message : "Place failed" };
@@ -95,7 +49,7 @@ export async function placeLiveShort(creds: BitunixCreds, input: { symbol: strin
 
 export async function flattenPosition(creds: BitunixCreds, positionId: string) {
   try {
-    await signedBitunix(creds, "POST", "/api/v1/futures/trade/flash_close_position", undefined, { positionId });
+    await callTrade(creds, "flatten", { positionId });
     return { ok: true as const };
   } catch (err) {
     return { ok: false as const, error: err instanceof Error ? err.message : "Flatten failed" };
@@ -104,14 +58,7 @@ export async function flattenPosition(creds: BitunixCreds, positionId: string) {
 
 export async function scaleLiveShort(creds: BitunixCreds, input: { symbol: string; qty: string }) {
   try {
-    await signedBitunix(creds, "POST", "/api/v1/futures/trade/place_order", undefined, {
-      symbol: input.symbol,
-      side: "BUY",
-      tradeSide: "CLOSE",
-      orderType: "MARKET",
-      qty: input.qty,
-      reduceOnly: true,
-    });
+    await callTrade(creds, "scale", { symbol: input.symbol, qty: input.qty });
     return { ok: true as const };
   } catch (err) {
     return { ok: false as const, error: err instanceof Error ? err.message : "Scale failed" };
@@ -120,25 +67,25 @@ export async function scaleLiveShort(creds: BitunixCreds, input: { symbol: strin
 
 export async function fetchLivePositions(creds: BitunixCreds): Promise<LivePosition[]> {
   try {
-    const data = await signedBitunix(creds, "GET", "/api/v1/futures/position/list");
+    const data = await callTrade(creds, "positions");
     return asRows(data).map((p) => ({
       positionId: String(p.positionId ?? p.id ?? ""),
       symbol: String(p.symbol ?? ""),
       base: baseFromSymbol(String(p.symbol ?? "")),
       side: String(p.side ?? "SHORT") as "LONG" | "SHORT",
-      entry: num(p.avgPrice ?? p.entryPrice ?? p.openPrice),
+      entry: num(p.avgOpenPrice ?? p.avgPrice ?? p.entryPrice ?? p.openPrice),
       qty: String(p.qty ?? p.volume ?? "0"),
       leverage: num(p.leverage ?? 10),
-      unrealized: num(p.unrealizedProfitLoss ?? p.unrealized ?? 0),
-      realized: num(p.realizedProfitLoss ?? p.realized ?? 0),
+      unrealized: num(p.unrealizedPNL ?? p.unrealizedProfitLoss ?? p.unrealized ?? 0),
+      realized: num(p.realizedPNL ?? p.realizedProfitLoss ?? p.realized ?? 0),
       margin: num(p.margin ?? p.isolated ?? 0),
-      liqPrice: num(p.liquidationPrice ?? p.liqPrice ?? 0),
-      entryValue: num(p.openValue ?? p.positionValue ?? 0),
+      liqPrice: num(p.liqPrice ?? p.liquidationPrice ?? 0),
+      entryValue: num(p.entryValue ?? p.openValue ?? p.positionValue ?? 0),
       fee: num(p.fee ?? 0),
       funding: num(p.funding ?? 0),
       marginRate: num(p.marginRate ?? 0),
       marginMode: String(p.marginMode ?? "ISOLATED"),
-      openedAt: num(p.openTime ?? p.createdTime ?? Date.now()),
+      openedAt: num(p.ctime ?? p.openTime ?? p.createdTime ?? Date.now()),
       mark: num(p.markPrice ?? p.lastPrice ?? 0),
     }));
   } catch {
@@ -148,7 +95,7 @@ export async function fetchLivePositions(creds: BitunixCreds): Promise<LivePosit
 
 export async function fetchLiveAccount(creds: BitunixCreds): Promise<LiveAccount | null> {
   try {
-    const data = await signedBitunix(creds, "GET", "/api/v1/futures/account");
+    const data = await callTrade(creds, "account");
     const a = (data ?? {}) as Record<string, unknown>;
     return {
       available: num(a.available ?? a.availableBalance ?? 0),
