@@ -42,7 +42,7 @@ export default function PlaybookContent() {
           <li>T+1d–T+5d: lower highs, volume dies, long liquidations. −40–90% from ATH, median −45%.</li>
           <li>T+weeks: it bases as a mid-cap (PONS, DGAI-class) or lands on a future delist list.</li>
           <li>Names that hold (DGAI) had major-venue TGEs and locked floats — if it never reaches the 12% retrace window, it never becomes the book.</li>
-          <li>Delists are one-way exit, and stock/CFD perps on the same page are a different market. Neither is the book.</li>
+          <li>Delists: the exit flow keeps grinding lower after the announcement — short the confirmed bleed (red 4h + selling), never the bounce. Stock/CFD perps on the same page are a different market.</li>
         </ul>
       </section>
 

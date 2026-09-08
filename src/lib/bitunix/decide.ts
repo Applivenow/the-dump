@@ -174,9 +174,26 @@ export function scoreList(
   const d = scoreDump({ ...row, quoteVol: Math.max(row.quoteVol, LIST_MIN_VOL_FRESH) }, selling, notional);
   d.book = "list";
   if (kind === "delist") {
-    d.action = "watch";
-    d.score = 5;
-    d.reason = "Delist = one-way exit. Used-up inventory — the fade already happened. Never the book.";
+    if (row.quoteVol < LIST_MIN_VOL_FRESH) {
+      d.action = "watch";
+      d.score = 15;
+      d.reason = `DELIST needs ≥ $500k to short the bleed. Tape is $${(row.quoteVol / 1e3).toFixed(0)}k.`;
+      return d;
+    }
+    if (!selling || row.red4h !== true) {
+      d.action = "watch";
+      d.score = 40;
+      d.reason = "Delist bleed not confirmed — need a selling tape and a red 4h before joining the exit flow.";
+      return d;
+    }
+    const plan = riskPlan(row.last, row.atrPct, notional);
+    d.action = "paper-short";
+    d.stop = plan.stop;
+    d.sizeUsd = plan.notional;
+    d.stopPct = plan.stopPct;
+    d.score = 70 + Math.min(20, Math.abs(row.changePct)) + (row.dailyBreak ? 5 : 0);
+    d.tells = [...(d.tells ?? []), "delist bleed", ...(row.dailyBreak ? ["daily lower low"] : [])];
+    d.reason = `DELIST Ready. Exit flow keeps grinding lower after the announcement. ${plan.stopPct.toFixed(1)}% stop, $${Math.round(plan.notional)} ticket.`;
     return d;
   }
   if (row.quoteVol < LIST_MIN_VOL_FRESH) {
