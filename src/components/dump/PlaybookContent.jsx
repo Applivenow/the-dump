@@ -28,9 +28,22 @@ export default function PlaybookContent() {
             <h4 className="font-display font-bold text-lg text-accent mb-1">Formula B — LIST</h4>
             <p className="font-body text-sm">
               Help Center listing. Never the first hour. 12–35% off listing high. ≥ $500k. 4h red. 24/7, honed 1–6 AM ET. 哈基米 → HAJIMI.
+              Bitunix is late-cascade — the high prints on the listing candle or T+1–T+3. A-top, not a rounded top.
             </p>
           </div>
         </div>
+      </section>
+
+      <section className="mb-8">
+        <h3 className="font-display font-bold text-2xl border-b-2 border-foreground pb-1 mb-3">The Listing Tape</h3>
+        <ul className="font-body space-y-1.5 text-base list-disc pl-5">
+          <li>T0: spot + 20x (or 50x) perps open the same second. Vertical premium, volume climax, ATH prints.</li>
+          <li>T+24h: withdrawal lock lifts. Airdrop and MM inventory leaves. No squeeze higher — just more supply.</li>
+          <li>T+1d–T+5d: lower highs, volume dies, long liquidations. −40–90% from ATH, median −45%.</li>
+          <li>T+weeks: it bases as a mid-cap (PONS, DGAI-class) or lands on a future delist list.</li>
+          <li>Names that hold (DGAI) had major-venue TGEs and locked floats — if it never reaches the 12% retrace window, it never becomes the book.</li>
+          <li>Delists are one-way exit, and stock/CFD perps on the same page are a different market. Neither is the book.</li>
+        </ul>
       </section>
 
       <section className="mb-8">

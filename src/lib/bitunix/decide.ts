@@ -26,7 +26,7 @@ export function baseFromSymbol(symbol: string) {
 export function isMajor(symbol: string) {
   const b = baseFromSymbol(symbol);
   if (MAJORS.has(b) || MAJORS.has(symbol.toUpperCase())) return true;
-  if (/^(XAU|XAG|XAUT|CL|BYD|TEAM|DDOG|SHEIN|SKHYNIX|NVDA|AAPL|TSLA|SPX|NDX)/i.test(b)) return true;
+  if (/^(XAU|XAG|XAUT|CL|BYD|TEAM|DDOG|SHEIN|SKHYNIX|NVDA|AAPL|TSLA|SPX|NDX|MARA|IONQ|TSLL)/i.test(b)) return true;
   return false;
 }
 export function isLeaderAlt(symbol: string) {
@@ -173,6 +173,12 @@ export function scoreList(
 ): Decision {
   const d = scoreDump({ ...row, quoteVol: Math.max(row.quoteVol, LIST_MIN_VOL_FRESH) }, selling, notional);
   d.book = "list";
+  if (kind === "delist") {
+    d.action = "watch";
+    d.score = 5;
+    d.reason = "Delist = one-way exit. Used-up inventory — the fade already happened. Never the book.";
+    return d;
+  }
   if (row.quoteVol < LIST_MIN_VOL_FRESH) {
     d.action = "watch";
     d.score = 15;
@@ -188,7 +194,7 @@ export function scoreList(
   if (kind === "meme" && listingAgeHours != null && listingAgeHours < 24) {
     d.action = "watch";
     d.score = 14;
-    d.reason = "Meme listing: wait for the first daily close. Real supply lands when withdrawals open.";
+    d.reason = "Meme listing: the 24h withdrawal lock is the trap. Supply lands when withdrawals open — wait for the first daily close.";
     return d;
   }
   if (d.action === "paper-short" && row.dailyBreak === false) {
@@ -197,7 +203,10 @@ export function scoreList(
     d.reason = "15m bounce dead, but no daily close under the prior low yet. Let the bleed confirm.";
     return d;
   }
-  if (d.action === "paper-short") d.reason = `LIST Ready. ${d.retracePct.toFixed(1)}% off listing high. Never the print. ${d.stopPct?.toFixed(1) ?? "ATR"}% stop.`;
+  if (d.action === "paper-short") {
+    d.tells = [...(d.tells ?? []), "A-top off the listing wick", "fade window T+1–T+5d"];
+    d.reason = `LIST Ready. ${d.retracePct.toFixed(1)}% off listing high. A-top confirmed — fades run −40–90% from ATH over 2–5 days after the unlock. ${d.stopPct?.toFixed(1) ?? "ATR"}% stop, ride the runner.`;
+  }
   return d;
 }
 
