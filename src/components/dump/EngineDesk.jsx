@@ -2,6 +2,7 @@ import { useEngineRuntime } from "@/lib/useEngineRuntime";
 import RuntimeBar from "./RuntimeBar";
 import DecisionCard from "./DecisionCard";
 import LiveVault from "./LiveVault";
+import ListingWire from "./ListingWire";
 import PaperBook from "./PaperBook";
 import LiveBook from "./LiveBook";
 
@@ -71,6 +72,7 @@ export default function EngineDesk() {
             setLiveAcked={rt.setLiveAcked}
             liveAccount={rt.liveAccount}
           />
+          <ListingWire watches={rt.listingWatches} />
           {openPaper.length > 0 && (
             <PaperBook positions={openPaper} lastRun={rt.lastRun} onClose={rt.closePaper} />
           )}

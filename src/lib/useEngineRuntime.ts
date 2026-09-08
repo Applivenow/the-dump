@@ -3,8 +3,9 @@ import { runEngine } from "./bitunix/engine";
 import { fetchKline, buyingStepsIn } from "./bitunix/scan";
 import { fetchLivePositions, fetchLiveAccount, placeLiveShort, flattenPosition, scaleLiveShort } from "./bitunix/trade";
 import { planLiveRide, paperPnlUsd, breakevenStop, hitOneR } from "./bitunix/decide";
+import { fetchListingWatches } from "./bitunix/listing-wire";
 import { useDumpStore, uid } from "./store";
-import type { EngineRun, LivePosition, LiveAccount, Decision, PaperPosition } from "./bitunix/types";
+import type { EngineRun, LivePosition, LiveAccount, Decision, PaperPosition, ListingWatch } from "./bitunix/types";
 
 export function useEngineRuntime() {
   const store = useDumpStore();
@@ -15,6 +16,7 @@ export function useEngineRuntime() {
   const [lastRun, setLastRun] = useState<EngineRun | null>(null);
   const [livePositions, setLivePositions] = useState<LivePosition[]>([]);
   const [liveAccount, setLiveAccount] = useState<LiveAccount | null>(null);
+  const [listingWatches, setListingWatches] = useState<ListingWatch[]>([]);
 
   const livePositionsRef = useRef<LivePosition[]>([]);
   const scaledSyms = useRef<Set<string>>(new Set());
@@ -103,6 +105,17 @@ export function useEngineRuntime() {
   }, [running]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function pollWire() {
+      const watches = await fetchListingWatches();
+      if (!cancelled) setListingWatches(watches);
+    }
+    pollWire();
+    const wireId = setInterval(pollWire, 45_000);
+    return () => { cancelled = true; clearInterval(wireId); };
+  }, []);
+
+  useEffect(() => {
     if (!liveAcked || !creds) {
       setLivePositions([]);
       setLiveAccount(null);
@@ -163,7 +176,7 @@ export function useEngineRuntime() {
     paperPositions: store.paperPositions, log: store.log, clearLog,
     settings, setSettings,
     running, setRunning, scanning, lastRun,
-    livePositions, liveAccount,
+    livePositions, liveAccount, listingWatches,
     openPaper, closePaper, openLive, flattenLive, scaleLive,
   };
 }
