@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { runEngine } from "./bitunix/engine";
-import { fetchKline, buyingStepsIn } from "./bitunix/scan";
+import { fetchKline, buyingStepsIn, fetchDepthStats } from "./bitunix/scan";
 import { fetchLivePositions, fetchLiveAccount, placeLiveShort, flattenPosition, scaleLiveShort } from "./bitunix/trade";
 import { planLiveRide, paperPnlUsd, breakevenStop, hitOneR } from "./bitunix/decide";
 import { fetchListingWatches } from "./bitunix/listing-wire";
@@ -63,10 +63,21 @@ export function useEngineRuntime() {
           const ready = run.decisions.filter((d) => d.action === "paper-short");
           const openSyms = new Set(livePositionsRef.current.map((p) => p.symbol));
           let slots = livePositionsRef.current.length;
+          const MAX_LIVE_SHORTS = 2;
           for (const d of ready) {
-            if (slots >= 3) break;
+            if (slots >= MAX_LIVE_SHORTS) break;
             if (openSyms.has(d.symbol)) continue;
-            const result = await placeLiveShort(credsRef.current, { symbol: d.symbol, last: d.last, notional: settingsRef.current.tradeSize });
+            const notional = d.sizeUsd ?? settingsRef.current.tradeSize;
+            const depth = await fetchDepthStats(d.symbol);
+            if (!depth || depth.spreadBps > 50) {
+              addLog({ kind: "info", message: `Live skip ${d.base}: spread too wide or no book.`, symbol: d.symbol });
+              continue;
+            }
+            if (depth.bidUsd < notional * 2) {
+              addLog({ kind: "info", message: `Live skip ${d.base}: thin bids ($${Math.round(depth.bidUsd)} vs 2× ticket).`, symbol: d.symbol });
+              continue;
+            }
+            const result = await placeLiveShort(credsRef.current, { symbol: d.symbol, last: d.last, notional, stopPrice: d.stop });
             if (result.ok) {
               addLog({ kind: "live-open", message: `LIVE SHORT ${d.base} @ ${d.entry}`, symbol: d.symbol, book: d.book });
               slots++;
@@ -135,7 +146,7 @@ export function useEngineRuntime() {
   const openPaper = useCallback((d: Decision) => {
     const pos: PaperPosition = {
       id: uid(), symbol: d.symbol, base: d.base, entry: d.entry, stop: d.stop,
-      target: d.target, sizeUsd: settingsRef.current.tradeSize, leverage: 10,
+      target: d.target, sizeUsd: d.sizeUsd ?? settingsRef.current.tradeSize, leverage: 10,
       openedAt: Date.now(), closedAt: null, closePrice: null,
       closeReason: "open", scaled: false, book: d.book ?? "dump",
     };
@@ -152,7 +163,7 @@ export function useEngineRuntime() {
 
   const openLive = useCallback(async (d: Decision) => {
     if (!creds) return;
-    const result = await placeLiveShort(creds, { symbol: d.symbol, last: d.last, notional: settingsRef.current.tradeSize });
+    const result = await placeLiveShort(creds, { symbol: d.symbol, last: d.last, notional: d.sizeUsd ?? settingsRef.current.tradeSize, stopPrice: d.stop });
     if (result.ok) addLog({ kind: "live-open", message: `LIVE SHORT ${d.base} @ ${d.entry}`, symbol: d.symbol, book: d.book });
     else addLog({ kind: "info", message: `Live short failed: ${result.error}`, symbol: d.symbol });
   }, [creds, addLog]);

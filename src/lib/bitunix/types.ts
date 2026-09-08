@@ -19,6 +19,8 @@ export interface ScanRow {
   listingAgeHours?: number | null;
   funding?: number | null;
   spreadBps?: number | null;
+  atrPct?: number | null;
+  bounceFailed?: boolean | null;
 }
 
 export interface Decision {
@@ -35,6 +37,8 @@ export interface Decision {
   book?: Book;
   red4h?: boolean;
   tells?: string[];
+  sizeUsd?: number;
+  stopPct?: number;
 }
 
 export interface EngineRun {

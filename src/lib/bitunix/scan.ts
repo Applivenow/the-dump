@@ -49,13 +49,15 @@ export async function fetchKline(symbol: string, interval: string, limit = 12) {
     const json = response.data;
     if (!json || json.error) return [];
     const rows = (json.data ?? []) as Record<string, unknown>[];
-    return rows.map((b) => ({
-      o: num(b.open ?? b.o),
-      h: num(b.high ?? b.h),
-      l: num(b.low ?? b.l),
-      c: num(b.close ?? b.c),
-      t: num(b.time ?? b.ts ?? b.openTime),
-    }));
+    return rows
+      .map((b) => ({
+        o: num(b.open ?? b.o),
+        h: num(b.high ?? b.h),
+        l: num(b.low ?? b.l),
+        c: num(b.close ?? b.c),
+        t: num(b.time ?? b.ts ?? b.openTime),
+      }))
+      .sort((a, b) => a.t - b.t);
   } catch {
     return [];
   }
@@ -73,15 +75,98 @@ export function buyingStepsIn(bars: { o: number; c: number }[]) {
   return lastTwo.every((b) => b.c > b.o);
 }
 
+export async function fetchFunding(symbol: string): Promise<number | null> {
+  try {
+    const response = await base44.functions.invoke("bitunixScan", { endpoint: "funding", symbol });
+    const json = response.data;
+    if (!json || json.error) return null;
+    const payload = json.data;
+    const row = (Array.isArray(payload) ? payload[0] : payload) as Record<string, unknown> | undefined;
+    const f = num(row?.fundingRate, NaN);
+    return Number.isFinite(f) ? f : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchDepthStats(symbol: string): Promise<{ bidUsd: number; askUsd: number; spreadBps: number } | null> {
+  try {
+    const response = await base44.functions.invoke("bitunixScan", { endpoint: "depth", symbol, limit: 50 });
+    const json = response.data;
+    if (!json || json.error || !json.data) return null;
+    const book = json.data as { bids?: [number, number][]; asks?: [number, number][] };
+    const bids = book.bids ?? [];
+    const asks = book.asks ?? [];
+    if (!bids.length || !asks.length) return null;
+    const bestBid = num(bids[0][0]);
+    const bestAsk = num(asks[0][0]);
+    const mid = (bestBid + bestAsk) / 2;
+    if (!(mid > 0)) return null;
+    const within1Pct = (levels: [number, number][], ref: number, isBid: boolean) =>
+      levels
+        .filter(([p]) => (isBid ? p >= ref * 0.99 : p <= ref * 1.01))
+        .reduce((sum, [p, q]) => sum + num(p) * num(q), 0);
+    return {
+      bidUsd: within1Pct(bids, bestBid, true),
+      askUsd: within1Pct(asks, bestAsk, false),
+      spreadBps: ((bestAsk - bestBid) / mid) * 10_000,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function atrPctFromBars(bars: { h: number; l: number; c: number }[]): number | null {
+  const closed = bars.length > 1 ? bars.slice(0, -1) : bars;
+  if (closed.length < 6) return null;
+  const trs = closed
+    .slice(-12)
+    .map((b) => (b.h - b.l) / b.c)
+    .filter((x) => Number.isFinite(x) && x > 0);
+  if (!trs.length) return null;
+  return (trs.reduce((s, x) => s + x, 0) / trs.length) * 100;
+}
+
+export function failedBounce(bars: { o: number; h: number; c: number }[]): boolean | null {
+  const closed = bars.length > 1 ? bars.slice(0, -1) : bars;
+  const window = closed.slice(-6);
+  if (window.length < 4) return null;
+  let bounceHigh = 0;
+  for (let i = 1; i < window.length; i++) {
+    if (window[i].h > window[i - 1].h && window[i].c > window[i].o) bounceHigh = Math.max(bounceHigh, window[i].h);
+  }
+  if (!(bounceHigh > 0)) return false;
+  const last = window[window.length - 1];
+  return last.c < bounceHigh && last.c < last.o;
+}
+
+export function btcCrashPct(bars: { o: number; c: number }[]): number {
+  const closed = bars.length > 1 ? bars.slice(0, -1) : bars;
+  const last = closed[closed.length - 1];
+  if (!last || !(last.o > 0)) return 0;
+  return ((last.c - last.o) / last.o) * 100;
+}
+
 export async function enrichRow(row: ScanRow, opts: { daily?: boolean } = {}): Promise<ScanRow> {
   try {
-    const bars = await fetchKline(row.symbol, "4h", 8);
+    const [bars, bars15, funding] = await Promise.all([
+      fetchKline(row.symbol, "4h", 8),
+      fetchKline(row.symbol, "15m", 14),
+      fetchFunding(row.symbol),
+    ]);
     let listingAgeHours: number | null = null;
     if (opts.daily) {
       const first = await fetchKline(row.symbol, "1d", 30).catch(() => []);
       listingAgeHours = first[0]?.t ? (Date.now() - first[0].t) / 3_600_000 : null;
     }
-    return { ...row, red4h: lastClosedRed(bars), listingAgeHours };
+    return {
+      ...row,
+      red4h: lastClosedRed(bars),
+      atrPct: atrPctFromBars(bars15),
+      bounceFailed: failedBounce(bars15),
+      funding,
+      listingAgeHours,
+    };
   } catch {
     return row;
   }

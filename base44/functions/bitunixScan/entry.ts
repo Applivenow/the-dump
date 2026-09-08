@@ -27,6 +27,23 @@ export default async function (req) {
       return Response.json(json);
     }
 
+    if (endpoint === "funding") {
+      const symbol = encodeURIComponent(String(body?.symbol ?? ""));
+      const url = `${FAPI}/api/v1/futures/market/funding_rate?symbol=${symbol}`;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const json = await res.json();
+      return Response.json(json);
+    }
+
+    if (endpoint === "depth") {
+      const symbol = encodeURIComponent(String(body?.symbol ?? ""));
+      const limit = Math.min(100, Math.max(10, Number(body?.limit ?? 50)));
+      const url = `${FAPI}/api/v1/futures/market/depth?symbol=${symbol}&limit=${limit}`;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const json = await res.json();
+      return Response.json(json);
+    }
+
     if (endpoint === "listings") {
       const [listRes, delistRes] = await Promise.all([
         fetch(LIST_URL, { headers: { Accept: "application/json" } })

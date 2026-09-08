@@ -47,6 +47,16 @@ export function stopForExactRisk(entry: number, notional: number, risk = MAX_LOS
   if (!(entry > 0) || !(notional > 0)) return entry * 1.033;
   return entry * (1 + risk / notional);
 }
+export const ATR_STOP_MULT = 1.5;
+export const MAX_STOP_PCT = 12;
+export function riskPlan(entry: number, atrPct: number | null | undefined, maxNotional: number, risk = MAX_LOSS_USD) {
+  const basePct = maxNotional > 0 ? (100 * risk) / maxNotional : 100;
+  const atrStop = atrPct && atrPct > 0 ? atrPct * ATR_STOP_MULT : 0;
+  const stopPct = Math.min(MAX_STOP_PCT, Math.max(basePct, atrStop));
+  if (!(entry > 0)) return { stop: entry, stopPct, notional: maxNotional };
+  const notional = Math.min(maxNotional, (100 * risk) / stopPct);
+  return { stop: entry * (1 + stopPct / 100), stopPct, notional };
+}
 export function hitOneR(entry: number, stop: number, last: number) {
   if (!(entry > 0) || !(stop > entry) || !(last > 0)) return false;
   return last <= entry - (stop - entry);
@@ -69,7 +79,9 @@ export function bookOf(book?: Book): Book {
 
 export function scoreDump(row: ScanRow, selling: boolean, notional = TRADE_SIZE_USD): Decision {
   const retrace = row.retracePct;
-  const stop = stopForExactRisk(row.last, notional);
+  let stop = stopForExactRisk(row.last, notional);
+  let sizeUsd = notional;
+  let stopPct = (100 * MAX_LOSS_USD) / notional;
   let action: DumpAction = "stand-down";
   let reason = "Not a dump.";
   let score = 0;
@@ -90,20 +102,38 @@ export function scoreDump(row: ScanRow, selling: boolean, notional = TRADE_SIZE_
     action = "watch";
     reason = `Only ${retrace.toFixed(0)}% off high. Need 12–35% before a Ready short.`;
     score = 25;
-  } else if (!selling) {
+  } else if (row.bounceFailed === false) {
     action = "watch";
-    reason = "Top is printed, but it is not selling off now. Wait for a red close.";
+    reason = "In the window, but no failed bounce yet. Let the bounce die first.";
+    score = 45;
+  } else if (row.bounceFailed == null && !selling) {
+    action = "watch";
+    reason = "Top is printed, but no failed bounce on the 15m. Wait for the rejection close.";
     score = 45;
   } else if (row.red4h === false) {
     action = "watch";
     reason = "12–35% off, but 4h is not red. Next fill must be topped and 4h red.";
     score = 50;
     tells.push("4h still green");
+  } else if (row.funding != null && row.funding <= -0.005) {
+    action = "watch";
+    reason = "Funding deeply negative — shorts pay longs, squeeze fuel. Stand down.";
+    score = 55;
+    tells.push("funding squeeze risk");
   } else {
+    const plan = riskPlan(row.last, row.atrPct, notional);
+    stop = plan.stop;
+    sizeUsd = plan.notional;
+    stopPct = plan.stopPct;
     action = "paper-short";
     score = 70 + Math.min(20, Math.abs(row.changePct));
-    reason = `Ready. ${retrace.toFixed(1)}% off high. $100 stop. Confirmed still fails.`;
+    if (row.funding != null && row.funding >= 0.001) {
+      score += 10;
+      tells.push("funding pays shorts");
+    }
+    if (row.bounceFailed) tells.push("bounce failed");
     if (row.red4h) tells.push("4h red");
+    reason = `Ready. ${retrace.toFixed(1)}% off high, bounce failed. ${plan.stopPct.toFixed(1)}% stop, $${Math.round(plan.notional)} ticket.`;
   }
   return {
     symbol: row.symbol,
@@ -119,6 +149,8 @@ export function scoreDump(row: ScanRow, selling: boolean, notional = TRADE_SIZE_
     book: "dump",
     red4h: row.red4h,
     tells,
+    sizeUsd,
+    stopPct,
   };
 }
 
@@ -137,7 +169,7 @@ export function scoreList(row: ScanRow, selling: boolean, listingAgeHours: numbe
     d.reason = "Never short the print. First hour must close.";
     return d;
   }
-  if (d.action === "paper-short") d.reason = `LIST Ready. ${d.retracePct.toFixed(1)}% off listing high. Never the print. $100 stop.`;
+  if (d.action === "paper-short") d.reason = `LIST Ready. ${d.retracePct.toFixed(1)}% off listing high. Never the print. ${d.stopPct?.toFixed(1) ?? "ATR"}% stop.`;
   return d;
 }
 

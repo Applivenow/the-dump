@@ -58,9 +58,9 @@ export function qtyForNotional(last: number, notional: number) {
   return raw.toFixed(4);
 }
 
-export async function placeLiveShort(creds: BitunixCreds, input: { symbol: string; last: number; notional: number }) {
+export async function placeLiveShort(creds: BitunixCreds, input: { symbol: string; last: number; notional: number; stopPrice?: number }) {
   const qty = qtyForNotional(input.last, input.notional);
-  const stop = stopForExactRisk(input.last, input.notional);
+  const stop = input.stopPrice ?? stopForExactRisk(input.last, input.notional);
   try {
     await signedBitunix(creds, "POST", "/api/v1/futures/account/change_leverage", undefined, {
       symbol: input.symbol,
