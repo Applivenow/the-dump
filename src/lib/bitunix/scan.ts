@@ -56,6 +56,7 @@ export async function fetchKline(symbol: string, interval: string, limit = 12) {
         l: num(b.low ?? b.l),
         c: num(b.close ?? b.c),
         t: num(b.time ?? b.ts ?? b.openTime),
+        v: num(b.quoteVol ?? b.vol ?? b.baseVol),
       }))
       .sort((a, b) => a.t - b.t);
   } catch {
@@ -140,6 +141,26 @@ export function failedBounce(bars: { o: number; h: number; c: number }[]): boole
   return last.c < bounceHigh && last.c < last.o;
 }
 
+export function volumeFade(bars: { o: number; c: number; v: number }[]): boolean | null {
+  const closed = bars.length > 1 ? bars.slice(0, -1) : bars;
+  if (closed.length < 4) return null;
+  let peak = closed[0];
+  for (const b of closed) if (b.v > peak.v) peak = b;
+  const last = closed[closed.length - 1];
+  return peak.c > peak.o && last.v < peak.v;
+}
+
+export function dailyBreak(bars: { h: number; l: number; c: number }[]): boolean | null {
+  const closed = bars.length > 1 ? bars.slice(0, -1) : bars;
+  if (closed.length < 2) return null;
+  const prev = closed[closed.length - 2];
+  const last = closed[closed.length - 1];
+  if (!(prev.l > 0) || !(last.h > last.l)) return null;
+  const belowPrevLow = last.c < prev.l;
+  const bottomThird = (last.c - last.l) / (last.h - last.l) <= 1 / 3;
+  return belowPrevLow && bottomThird;
+}
+
 export function btcCrashPct(bars: { o: number; c: number }[]): number {
   const closed = bars.length > 1 ? bars.slice(0, -1) : bars;
   const last = closed[closed.length - 1];
@@ -149,15 +170,15 @@ export function btcCrashPct(bars: { o: number; c: number }[]): number {
 
 export async function enrichRow(row: ScanRow, opts: { daily?: boolean } = {}): Promise<ScanRow> {
   try {
-    const [bars, bars15, funding] = await Promise.all([
+    const [bars, bars15, funding, bars1d] = await Promise.all([
       fetchKline(row.symbol, "4h", 8),
       fetchKline(row.symbol, "15m", 14),
       fetchFunding(row.symbol),
+      fetchKline(row.symbol, "1d", 30),
     ]);
     let listingAgeHours: number | null = null;
     if (opts.daily) {
-      const first = await fetchKline(row.symbol, "1d", 30).catch(() => []);
-      listingAgeHours = first[0]?.t ? (Date.now() - first[0].t) / 3_600_000 : null;
+      listingAgeHours = bars1d[0]?.t ? (Date.now() - bars1d[0].t) / 3_600_000 : null;
     }
     return {
       ...row,
@@ -166,6 +187,8 @@ export async function enrichRow(row: ScanRow, opts: { daily?: boolean } = {}): P
       bounceFailed: failedBounce(bars15),
       funding,
       listingAgeHours,
+      volFade: volumeFade(bars1d),
+      dailyBreak: dailyBreak(bars1d),
     };
   } catch {
     return row;

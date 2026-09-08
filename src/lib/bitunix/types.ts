@@ -21,6 +21,8 @@ export interface ScanRow {
   spreadBps?: number | null;
   atrPct?: number | null;
   bounceFailed?: boolean | null;
+  volFade?: boolean | null;
+  dailyBreak?: boolean | null;
 }
 
 export interface Decision {

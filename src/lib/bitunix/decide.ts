@@ -120,6 +120,11 @@ export function scoreDump(row: ScanRow, selling: boolean, notional = TRADE_SIZE_
     reason = "Funding deeply negative — shorts pay longs, squeeze fuel. Stand down.";
     score = 55;
     tells.push("funding squeeze risk");
+  } else if (row.volFade === false) {
+    action = "watch";
+    reason = "Dump volume still building vs the pump day — capitulation, not distribution. Bounce risk.";
+    score = 58;
+    tells.push("capitulation volume");
   } else {
     const plan = riskPlan(row.last, row.atrPct, notional);
     stop = plan.stop;
@@ -133,6 +138,11 @@ export function scoreDump(row: ScanRow, selling: boolean, notional = TRADE_SIZE_
     }
     if (row.bounceFailed) tells.push("bounce failed");
     if (row.red4h) tells.push("4h red");
+    if (row.volFade) tells.push("volume fading vs pump");
+    if (row.dailyBreak) {
+      score += 5;
+      tells.push("daily bleed confirmed");
+    }
     reason = `Ready. ${retrace.toFixed(1)}% off high, bounce failed. ${plan.stopPct.toFixed(1)}% stop, $${Math.round(plan.notional)} ticket.`;
   }
   return {
@@ -154,7 +164,13 @@ export function scoreDump(row: ScanRow, selling: boolean, notional = TRADE_SIZE_
   };
 }
 
-export function scoreList(row: ScanRow, selling: boolean, listingAgeHours: number | null, notional = TRADE_SIZE_USD): Decision {
+export function scoreList(
+  row: ScanRow,
+  selling: boolean,
+  listingAgeHours: number | null,
+  notional = TRADE_SIZE_USD,
+  kind: "meme" | "delist" | "tradfi" = "meme",
+): Decision {
   const d = scoreDump({ ...row, quoteVol: Math.max(row.quoteVol, LIST_MIN_VOL_FRESH) }, selling, notional);
   d.book = "list";
   if (row.quoteVol < LIST_MIN_VOL_FRESH) {
@@ -167,6 +183,18 @@ export function scoreList(row: ScanRow, selling: boolean, listingAgeHours: numbe
     d.action = "watch";
     d.score = 12;
     d.reason = "Never short the print. First hour must close.";
+    return d;
+  }
+  if (kind === "meme" && listingAgeHours != null && listingAgeHours < 24) {
+    d.action = "watch";
+    d.score = 14;
+    d.reason = "Meme listing: wait for the first daily close. Real supply lands when withdrawals open.";
+    return d;
+  }
+  if (d.action === "paper-short" && row.dailyBreak === false) {
+    d.action = "watch";
+    d.score = 48;
+    d.reason = "15m bounce dead, but no daily close under the prior low yet. Let the bleed confirm.";
     return d;
   }
   if (d.action === "paper-short") d.reason = `LIST Ready. ${d.retracePct.toFixed(1)}% off listing high. Never the print. ${d.stopPct?.toFixed(1) ?? "ATR"}% stop.`;

@@ -30,7 +30,7 @@ export async function runEngine(settings: Settings): Promise<EngineRun> {
       if (!ticker) continue;
       const enriched = await enrichRow(ticker, { daily: true });
       const selling = enriched.changePct < 0;
-      allDecisions.push(scoreList(enriched, selling, enriched.listingAgeHours ?? null, settings.tradeSize));
+      allDecisions.push(scoreList(enriched, selling, enriched.listingAgeHours ?? null, settings.tradeSize, w.kind));
     }
   }
 
